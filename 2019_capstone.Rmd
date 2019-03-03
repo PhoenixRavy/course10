@@ -1,0 +1,193 @@
+---
+title: '201902'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(NLP)
+library(tm)
+library(stringi)
+library(RWeka)
+library(rJava)
+
+library(dplyr)
+library(parallel)
+library(wordcloud)
+setwd("~/R/final")
+
+```
+
+## R Markdown
+Downloading the files
+
+```{r import_file}
+txt1 <-file("~/R/final/en_US.twitter.txt", open = "rb")
+twitter <-readLines(txt1, skipNul = TRUE, encoding="UTF-8")
+close(txt1)
+
+txt2 <-file("~/R/final/en_US.news.txt", open = "rb")
+news <-readLines(txt2, skipNul = TRUE, encoding="UTF-8")
+close(txt2)
+
+txt3 <-file("~/R/final/en_US.blogs.txt", open = "rb")
+blogs <-readLines(txt3, skipNul = TRUE, encoding="UTF-8")
+close(txt3)
+```
+
+
+## Word sampling
+Sampling the words from the three files and putting it into one line and sampling the file.
+
+```{r word_sampling}
+file_sample <- function(textbody, portion) {
+                taking <- sample(1:length(textbody), length(textbody)*portion)
+                        file_sample <- textbody[taking]
+                file_sample
+              }
+
+set.seed(9872)
+portion <- 0.01
+
+sample_twitter <- file_sample(twitter, portion)
+sample_blog <- file_sample(blogs, portion)
+sample_news <- file_sample(news, portion)
+
+sample_all <- c(sample_twitter, sample_blog, sample_news)
+writeLines(sample_all, "~/R/final/sample_all/sample_all.txt")
+```
+
+
+## Cleaning the data
+Removing the punctuations, numbers, special caracters, converting all tspacehe letters in lowcase and stripping thewhite space to create a modified corpus and tokenizing the new text.
+
+```{r clean_data}
+clean_data <- function (textcp) {
+                textcp <- tm_map(textcp, content_transformer(tolower))
+                textcp <- tm_map(textcp, stripWhitespace)
+                textcp <- tm_map(textcp, removePunctuation)
+                textcp <- tm_map(textcp, removeNumbers)
+                textcp
+              }
+
+sample_all <-VCorpus(DirSource("~/R/final/sample_all", encoding = "UTF-8"))
+sample_all <-clean_data(sample_all)
+```
+
+
+## N-gram function
+
+```{r ngram}
+
+# Defining the function in order to create the n-grams
+ngram_fct <- function (textcp, n) {
+  NgramTokenizer <- function(x) {RWeka::NGramTokenizer(x, RWeka::Weka_control(min = n, max = n))}
+  ngram_fct <- TermDocumentMatrix(textcp, control = list(tokenizer = NgramTokenizer))
+  ngram_fct
+}
+
+# Defining function in order to extract and sort the n-grams 
+ngram_sort_fct <- function (ngram_fct) {
+                      ngram_fct_m <- as.matrix(ngram_fct)
+                      ngram_fct_df <- as.data.frame(ngram_fct_m)
+                      colnames(ngram_fct_df) <- "Count"
+                      ngram_fct_df <- ngram_fct_df[order(-ngram_fct_df$Count), , drop = FALSE]
+                      ngram_fct_df
+                    }
+
+# Calculating the n-grams
+options(java.parameters = "-Xmx1024m")
+
+ngram_fct1 <-ngram_fct(sample_all, 1)
+ngram_fct2 <-ngram_fct(sample_all, 2)
+ngram_fct3 <-ngram_fct(sample_all, 3)
+ngram_fct4 <-ngram_fct(sample_all, 4)
+
+# Extracting the term count tables from ngrams plus sorting 
+ngram_fct1_df <-ngram_sort_fct(ngram_fct1)
+ngram_fct2_df <-ngram_sort_fct(ngram_fct2)
+ngram_fct3_df <-ngram_sort_fct(ngram_fct3)
+ngram_fct4_df <-ngram_sort_fct(ngram_fct4)
+```
+
+# Saving the dataframes from the quad-grams and compressing the data
+
+```{r quad_gram}
+quad_gram <-data.frame(rows=rownames(ngram_fct4_df),count=ngram_fct4_df$Count)
+quad_gram$rows <-as.character(quad_gram$rows)
+quad_gram_split <-strsplit(as.character(quad_gram$rows),split=" ")
+
+quad_gram <-transform(quad_gram, one = sapply(quad_gram_split,"[[",1),
+                   two = sapply(quad_gram_split,"[[",2),
+                   three =sapply(quad_gram_split,"[[",3), 
+                   four = sapply(quad_gram_split,"[[",4)
+                  )
+
+quad_gram <- data.frame(unigram = quad_gram$one,
+                    bi_gram = quad_gram$two, 
+                    tri_gram = quad_gram$three, 
+                    quad_gram = quad_gram$four, 
+                    freq = quad_gram$count,stringsAsFactors=FALSE)
+
+write.csv(quad_gram[quad_gram$freq > 1,],"./quad_gram.csv",row.names=F)
+
+quad_gram <- read.csv("./quad_gram.csv",stringsAsFactors = F)
+saveRDS(quad_gram,"./quad_gram.RData")
+```
+
+# Saving the dataframes from the tri-grams and compressing the data
+
+```{r tri_gram}
+tri_gram <- data.frame(rows=rownames(ngram_fct3_df),count=ngram_fct3_df$Count)
+tri_gram$rows <- as.character(tri_gram$rows)
+tri_gram_split <- strsplit(as.character(tri_gram$rows),split=" ")
+
+tri_gram <- transform(tri_gram,one = sapply(tri_gram_split,"[[",1),
+                      two = sapply(tri_gram_split,"[[",2),
+                      three = sapply(tri_gram_split,"[[",3))
+
+tri_gram <- data.frame(unigram = tri_gram$one,
+                       bi_gram = tri_gram$two, 
+                       tri_gram = tri_gram$three, freq = tri_gram$count,stringsAsFactors=FALSE)
+
+write.csv(tri_gram[tri_gram$freq > 1,],"./tri_gram.csv",row.names=F)
+
+tri_gram <- read.csv("./tri_gram.csv",stringsAsFactors = F)
+saveRDS(tri_gram,"./tri_gram.RData")
+```
+
+# Saving the dataframes from the bi-grams and compressing the data
+```{r bi_gram}
+bi_gram <- data.frame(rows=rownames(ngram_fct2_df), count=ngram_fct2_df$Count)
+bi_gram$rows <- as.character(bi_gram$rows)
+bi_gram_split <- strsplit(as.character(bi_gram$rows),split=" ")
+
+bi_gram <- transform(bi_gram,
+                     one = sapply(bi_gram_split,"[[",1),
+                     two = sapply(bi_gram_split,"[[",2))
+
+bi_gram <- data.frame(unigram = bi_gram$one,
+                      bi_gram = bi_gram$two,freq = bi_gram$count,stringsAsFactors=FALSE)
+
+write.csv(bi_gram[bi_gram$freq > 1,],"./bi_gram.csv",row.names=F)
+
+bi_gram <- read.csv("./bi_gram.csv",stringsAsFactors = F)
+saveRDS(bi_gram,"./bi_gram.RData")
+```
+
+# Saving the dataframes from the bi-grams and compressing the data
+```{r uni_gram}
+uni_gram <- data.frame(rows=rownames(ngram_fct1_df), count=ngram_fct1_df$Count)
+uni_gram$rows <- as.character(uni_gram$rows)
+uni_gram_split <- strsplit(as.character(uni_gram$rows),split=" ")
+
+uni_gram <- transform(uni_gram,
+                     one = sapply(uni_gram_split,"[[",1))
+
+uni_gram <- data.frame(unigram = uni_gram$one,freq = uni_gram$count,stringsAsFactors=FALSE)
+
+write.csv(uni_gram[uni_gram$freq > 1,],"./uni_gram.csv",row.names=F)
+
+uni_gram <- read.csv("./uni_gram.csv",stringsAsFactors = F)
+saveRDS(uni_gram,"./uni_gram.RData")
+```
